@@ -78,9 +78,13 @@ folder_path = "video_reports"
 video_report_docs = []  # Initialize the variable
 
 
+# Load video reports
+folder_path = "video_reports"
+video_report_docs = []  # Initialize the variable
+
 if os.path.exists(folder_path):
     print(f"Loading files from {folder_path}...")
-    
+
     for filename in os.listdir(folder_path):
         if filename.endswith('.md'):
             filepath = os.path.join(folder_path, filename)
@@ -97,10 +101,21 @@ if os.path.exists(folder_path):
             except Exception as e:
                 print(f"Error loading {filename}: {e}")
     
-    print(f"Loaded {len(video_report_docs)} video report files")
+    print(f"Loaded {len(video_report_docs)} video report file(s)")
+
+    if video_report_docs:
+        for i, doc in enumerate(video_report_docs):
+            print(f"  Document {i+1}: {doc.metadata['source']}")
+    else:
+        print("No video report `.md` files found in the directory.")
+
+else:
+    print(f"Directory '{folder_path}' not found. Skipping video report loading.")
+
+
 
      # Chunk the documents if needed
-    if video_report_docs:
+    """" if video_report_docs:
         print("Starting text splitting...")
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
         
@@ -122,7 +137,7 @@ if os.path.exists(folder_path):
         print(f"Total video report chunks created: {len(video_report_docs)}")
 else:
     print(f"Directory {folder_path} not found, skipping video report files")
-
+    """  
 # Combine all documents
 all_docs = txt_docs + police_docs + video_report_docs
 
