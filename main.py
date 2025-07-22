@@ -175,7 +175,7 @@ Context: {context}
 Answer:""")
 
 
-model = OllamaLLM(model="llama3.2", temperature=0.5)
+model = OllamaLLM(model="gemma3", temperature=0.5)
 
 class State(TypedDict):
     question: str
