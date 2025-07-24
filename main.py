@@ -2,9 +2,10 @@ import os
 import glob
 import re
 import sqlite3
+from collections import Counter
 from langchain_ollama.llms import OllamaLLM 
 from langchain_core.prompts import ChatMessagePromptTemplate
-from langchain_community.document_loaders import  TextLoader
+from langchain_community.document_loaders import  UnstructuredMarkdownLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_ollama import OllamaEmbeddings
 from typing import TypedDict, List, Optional
@@ -21,8 +22,41 @@ from langchain_core.prompts import PromptTemplate
 
 load_dotenv()
 
-# Police vehicle database
+def extract_vehicle_entries(md_content: str, source_file: str) -> list[Document]:
+    vehicle_docs = []
 
+    # Split by "### Vehicle ID: X"
+    entries = re.split(r'### Vehicle ID:\s*(\d+)', md_content)
+
+    for i in range(1, len(entries), 2):
+        vehicle_id = entries[i].strip()
+        vehicle_block = entries[i + 1].strip()
+
+        # Build the full content
+        full_content = f"Vehicle ID: {vehicle_id}\n{vehicle_block}"
+
+        # Extract metadata fields using regex
+        vehicle_type = re.search(r'Type of Vehicle:\s*(.+)', vehicle_block)
+        color = re.search(r'Color:\s*(.+)', vehicle_block)
+        license_plate = re.search(r'License Plate:\s*(.+)', vehicle_block)
+
+        doc = Document(
+            page_content=full_content,
+            metadata={
+                "vehicle_id": vehicle_id,
+                "source": source_file,
+                "type": "camera_log",
+                "vehicle_type": vehicle_type.group(1) if vehicle_type else None,
+                "color": color.group(1) if color else None,
+                "license_plate": license_plate.group(1) if license_plate else None,
+            }
+        )
+        vehicle_docs.append(doc)
+
+    return vehicle_docs
+
+# Police vehicle database
+"""
 def load_vehicles_from_db(db_path: str) -> list[Document]:
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -63,6 +97,7 @@ def load_vehicles_from_db(db_path: str) -> list[Document]:
 
 police_docs = load_vehicles_from_db('police_db.db')
 
+txt_docs = []
 # Witness Reports
 txt_loader = TextLoader("witness_reports.txt")
 txt_docs = txt_loader.load()
@@ -72,50 +107,34 @@ for doc in txt_docs:
     doc.metadata["type"] = "witness_reports"
 
     txt_docs = []
-
+    """
 # Load video reports
-folder_path = "video_reports"
-video_report_docs = []  # Initialize the variable
+video_report_docs = []
+folder_path = "video_reports_new"
 
+for filename in os.listdir(folder_path):
+    if filename.endswith(".md"):
+        path = os.path.join(folder_path, filename)
+        with open(path, 'r', encoding='utf-8') as f:
+            content = f.read()
+            vehicle_docs = extract_vehicle_entries(content, filename)
+            video_report_docs.extend(vehicle_docs)
 
-# Load video reports
-folder_path = "video_reports"
-video_report_docs = []  # Initialize the variable
+print(f"....")
 
-if os.path.exists(folder_path):
-    print(f"Loading files from {folder_path}...")
-
-    for filename in os.listdir(folder_path):
-        if filename.endswith('.md'):
-            filepath = os.path.join(folder_path, filename)
-            print(f"Loading: {filename}")
-            try:
-                with open(filepath, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                    doc = Document(page_content=content, metadata={
-                        "source": filename,
-                        "type": "camera_log",
-                        "video_reports": filename.split('.')[0]
-                    })
-                    video_report_docs.append(doc)
-            except Exception as e:
-                print(f"Error loading {filename}: {e}")
-    
-    print(f"Loaded {len(video_report_docs)} video report file(s)")
-
-    if video_report_docs:
-        for i, doc in enumerate(video_report_docs):
-            print(f"  Document {i+1}: {doc.metadata['source']}")
-    else:
-        print("No video report `.md` files found in the directory.")
-
+if video_report_docs:
+    unique_files = set(doc.metadata["source"] for doc in video_report_docs)
+    print(f"Loaded {len(video_report_docs)} individual vehicle documents from {len(unique_files)} files.")
+    file_counts = Counter(doc.metadata["source"] for doc in video_report_docs)
+    for filename, count in file_counts.items():
+        print(f"  - {filename}: {count} vehicles")
 else:
-    print(f"Directory '{folder_path}' not found. Skipping video report loading.")
+    print(f"No vehicle documents loaded from '{folder_path}'.")
 
 
 
      # Chunk the documents if needed
-    """" if video_report_docs:
+"""" if video_report_docs:
         print("Starting text splitting...")
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=100)
         
@@ -139,27 +158,26 @@ else:
     print(f"Directory {folder_path} not found, skipping video report files")
     """  
 # Combine all documents
-all_docs = txt_docs + police_docs + video_report_docs
+# all_docs = txt_docs + police_docs + video_report_docs
 
 
-embeddings = OllamaEmbeddings(model="llama3.2",)
+embeddings = OllamaEmbeddings(model="deepseek-r1:8b",)
 
 vectorstore = InMemoryVectorStore(embedding=embeddings)
-vectorstore.add_documents(all_docs)
+vectorstore.add_documents(video_report_docs)
 
 # Separate vectorstores for each document type 
     
-vectorstore_police = InMemoryVectorStore(embedding=embeddings)
-if police_docs:
-        vectorstore_police.add_documents(police_docs)
+#vectorstore_police = InMemoryVectorStore(embedding=embeddings)
+#if police_docs:
+#       vectorstore_police.add_documents(police_docs)
     
-vectorstore_witness = InMemoryVectorStore(embedding=embeddings)
-if txt_docs:
-    vectorstore_witness.add_documents(txt_docs)
+#vectorstore_witness = InMemoryVectorStore(embedding=embeddings)
+#if txt_docs:
+#    vectorstore_witness.add_documents(txt_docs)
     
 vectorstore_video = InMemoryVectorStore(embedding=embeddings)
-if video_report_docs:
-     vectorstore_video.add_documents(video_report_docs)
+vectorstore_video.add_documents(video_report_docs)
     
 print("Vector stores created successfully!")
 custom_prompt = PromptTemplate.from_template(
@@ -175,8 +193,9 @@ Context: {context}
 Answer:""")
 
 
-model = OllamaLLM(model="gemma3", temperature=0.5)
-
+llm = OllamaLLM(model="gemma3", temperature=0.5)
+# llm = ChatOllama(model="deepseek-r1:8b", temperature=0.3)
+# llm = ChatOllama(model="llama3.2", temperature=0.5)
 class State(TypedDict):
     question: str
     context: List[Document]
@@ -207,47 +226,35 @@ def retrieve(state: State):
     else:
         if sources["video"]:
             docs.extend([doc for doc, _ in vectorstore_video.similarity_search_with_score(question, k=10)])
-        if sources["witness"]:
-            docs.extend([doc for doc, _ in vectorstore_witness.similarity_search_with_score(question, k=10)])
-        if sources["police"]:
-            docs.extend([doc for doc, _ in vectorstore_police.similarity_search_with_score(question, k=10)])
-
+        #if sources["witness"]:
+        #    docs.extend([doc for doc, _ in vectorstore_witness.similarity_search_with_score(question, k=10)])
+        #if sources["police"]:
+        #    docs.extend([doc for doc, _ in vectorstore_police.similarity_search_with_score(question, k=10)])
+    
+    full_scan_keywords = ["check all", "list every", "scan all", "all black cars", "across all reports"]
+    if any(kw in question for kw in full_scan_keywords):
+        print("Full scan triggered by query keywords.")
+        docs.extend(video_report_docs)
+        
     # If no specific source is triggered, search everything
     if not any(sources.values()) and not file_matches:
         print("No specific source found, searching across all.")
-        docs.extend([doc for doc, _ in vectorstore_video.similarity_search_with_score(question, k=5)])
-        docs.extend([doc for doc, _ in vectorstore_police.similarity_search_with_score(question, k=5)])
-        docs.extend([doc for doc, _ in vectorstore_witness.similarity_search_with_score(question, k=5)])
+        docs.extend(video_report_docs)
+        #docs.extend([doc for doc, _ in vectorstore_video.similarity_search_with_score(question, k=5)])
+        #docs.extend([doc for doc, _ in vectorstore_police.similarity_search_with_score(question, k=5)])
+        #docs.extend([doc for doc, _ in vectorstore_witness.similarity_search_with_score(question, k=5)])
 
     return {"context": docs, "feedback": None}
 
 
 def generate(state: State):
     print("--Generating Response--")
-    
-    # FIXED: Use actual source filenames instead of generic "Document X"
-    docs_contents = []
-    for i, doc in enumerate(state["context"]):
-      
-        # Extract source filename from metadata
-        source = doc.metadata.get('source', f'Unknown_Document_{i+1}')
-     
-        # Format with actual source name
-        doc_content = f"Source: {source}\nContent: {doc.page_content}"
-        docs_contents.append(doc_content)
-    0
-    # Join all documents with clear separators
-    formatted_context = "\n\n" + "="*50 + "\n\n".join(docs_contents)
-    
-    # FIXED: Properly format the prompt invocation
-    prompt_input = {
-        'question': state['question'], 
-        'context': formatted_context, 
-        'feedback': state.get('feedback', 'None')
-    }
-    
-    messages = custom_prompt.format(**prompt_input)
-    response = model.invoke(messages)
+    #docs_contents =  "\n\n".join([doc.page_content for doc in state["context"]])
+    docs_contents =  "\n\n".join([f"Document {i+1}: {doc.page_content}" for i, doc in enumerate(state["context"])])
+    #print("----------------DOC CONTENTS----------------")
+    #print(docs_contents)
+    messages = custom_prompt.invoke({'question': state['question'], 'context': state['context'], 'feedback':state['feedback']})
+    response = llm.invoke(messages)
     return {'answer': response}
 
 def feedback_loop(state: State):
